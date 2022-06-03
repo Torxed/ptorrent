@@ -64,6 +64,11 @@ for index, chunk in enumerate(chunks):
 			func=chunk.download
 		)
 
+	if index >= 5:
+		break
+
+	print(f"Created worker for index {index}")
+
 last_output = time.time()
 last_num_done = 0
 for chunk_index in range(len(chunks)):
@@ -87,7 +92,7 @@ for chunk_index in range(len(chunks)):
 				ptorrent.start_next_worker(next_worker_id)
 
 			if ptorrent.storage['torrents'][torrent_internal_uuid]['chunks'].empty() is False:
-				finished_chunk = ptorrent.storage['torrents'][torrent_internal_uuid]['chunks'].get()
+				finished_chunk = ptorrent.storage['torrents'][torrent_internal_uuid]['chunks'].get(block=True)
 
 				for _index, _chunk in list(enumerate(chunks)):
 					if _chunk.index == finished_chunk.index:
@@ -108,6 +113,9 @@ for chunk_index in range(len(chunks)):
 
 					print(f"{done}/{len(chunks)} has finished downloading.")
 
+					if last_num_done > 5:
+						break
+
 			time.sleep(0.0001)
 
 	if time.time() - last_output > 1:
@@ -122,20 +130,12 @@ for chunk_index in range(len(chunks)):
 
 			print(f"{done}/{len(chunks)} has finished downloading.")
 
-	if last_num_done > 2:
+	if last_num_done > 5:
 		break
-
-# for uuid in ptorrent.storage['torrents']:
-# 	peers = ptorrent.storage['torrents'][uuid]['peers'].get()
-# 	for priority in sorted(peers.keys(), key=lambda prio: prio.chunk_speed):
-# 		print(priority, peers[priority])
 
 if len(chunks) == chunks_count:
  	torrent.feed(chunks)
 
 ptorrent.close_all_workers()
 torrent.close()
-#if torrent.url_list:
-#	for i in range(math.ceil(chunks)+1):
-#		chunk_target = torrent.url_list[i % len(torrent.url_list)]
-#		print(f'Downloading chunk {i} from {chunk_target}')
+exit(0)

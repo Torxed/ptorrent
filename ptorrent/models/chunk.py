@@ -8,22 +8,33 @@ import sys
 import http.client
 import threading
 import time
+import socket
+import ssl
 from dataclasses import dataclass
 from .torrent import Torrent
 from .seeders import Priority, Peer
 from ..storage import storage
 
 class Reader(threading.Thread):
-	def __init__(self, func):
+	def __init__(self, func, chunksize):
 		self.func = func
+		self.chunksize = chunksize
 		self.data = None
 		threading.Thread.__init__(self)
+		self._stop_event = threading.Event()
 		self.start()
+
+	def kill(self):
+		self._stop_event.set()
+
+	def stopped(self):
+		return self._stop_event.is_set()
 
 	def run(self):
 		try:
-			self.data = self.func()
+			self.data = self.func(self.chunksize)
 		except Exception as error:
+			print(f'Could not read data: {error}')
 			pass
 
 @dataclass
@@ -72,45 +83,67 @@ class BrokenChunk:
 		return True
 
 	def download(self):
-		# print(f"Initating download of index {self.index}")
+		print(f"{self.index}: Initating download")
 
+		last_output = time.time()
 		prio = None
 		while prio is None:
 			prio, peer = self.torrent.get_fastest_peer()
 			time.sleep(0.0001)
+			if time.time() - last_output > 5:
+				print(f"{self.index} still waiting for fastest available peer...")
+				last_output = time.time()
 
-		start = int(self.index * self.torrent.info.piece_length)
-		end = int(start + self.torrent.info.piece_length)-1
+		chunk_start_byte = int(self.index * self.torrent.info.piece_length)
+		chunk_end_byte = int(chunk_start_byte + self.torrent.info.piece_length)-1
 
-		if urllib.parse.urlparse(peer.target).scheme:
-			if peer.target[-1] == '/':
-				peer.target += self.torrent.info.name.decode('UTF-8', errors='replace')
+		if (http_schema := urllib.parse.urlparse(peer.target)).scheme:
+			if http_schema.path.endswith('/') is True:
+				http_schema = urllib.parse.urlparse(peer.target + self.torrent.info.name.decode('UTF-8', errors='replace'))
 
-			# print(f"Starting download of index {self.index} via {peer.target}")
+			print(f"{self.index}: Starting download of index via {http_schema}")
 
-			request = urllib.request.Request(peer.target)
-			request.headers['Range'] = f"bytes={start}-{end}"
+			# request = urllib.request.Request(peer.target)
+			# request.headers['Range'] = f"bytes={start}-{end}"
 			
 			try:
 				con_start = time.time()
-#				print(f"Con opening at {con_start}")
-				handle = urllib.request.urlopen(request, timeout=2)
+				# print(f"Connecting!")
+				if http_schema.scheme == 'https':
+					handle = http.client.HTTPSConnection(*http_schema.netloc.split(':', 1), timeout=1)
+				elif http_schema.scheme == 'http':
+					handle = http.client.HTTPConnection(*http_schema.netloc.split(':', 1), timeout=1)
+				else:
+					raise ValueError(f"Unknown schema: {http_schema.scheme}")
+
+				handle.putrequest('GET', http_schema.path)
+				handle.putheader('User-Agent', f"pTorrent")
+				handle.putheader('Range', f"bytes={chunk_start_byte}-{chunk_end_byte}")
+				handle.endheaders()
+				handle.send(b'')
+				# handle = urllib.request.urlopen(request, timeout=1)
 				con_end = time.time()
-#				print(f"Con open at {con_end}")
+				# print(f"Con done at {con_end}")
 
 				dl_started = time.time()
-#				print(f"Dl started at {dl_started}")
-				reader = Reader(handle.read)
+				print(f"{self.index}: Connecting took {con_end - con_start}")
+
+				response = handle.getresponse()
+				if response.status != 206:
+					raise TimeoutError(f"Wrong HTTP status code: {response.status}.")
+
+				reader = Reader(response.read, self.torrent.info.piece_length)
 				while reader.is_alive():
-					if time.time() - dl_started > 2:
-						raise TimeoutError(f"Could not read data in timely fashion.")
+					if time.time() - dl_started > 1:
+						reader.kill()
+						break
 					time.sleep(0.0001)
 
 				if reader.data is None:
 					raise TimeoutError(f"Could not read data in timely fashion.")
 
 				dl_ended = time.time()
-#				print(f"Dl finished at {dl_ended}")
+				print(f"{self.index}: Download took {dl_ended - dl_started}: {reader.data[:20]}...")
 				self.torrent.update_priority(
 					priority=Priority(connectivity=con_end - con_start, chunk_speed=dl_ended - dl_started),
 					peer=peer
@@ -118,20 +151,26 @@ class BrokenChunk:
 
 				self.data = reader.data
 				self.actual_hash = hashlib.sha1(self.data).digest()
-
-				# print(f'{self} Finished downloading at connectivity={con_end - con_start}, chunk_speed={dl_ended - dl_started}')
-			except http.client.IncompleteRead:
-#				print(f"IncompleteRead")
+			except ssl.SSLCertVerificationError as error:
+				print(f"{self.index} ******> {error}")
+				self._broken_download = True
+			except socket.gaierror as error:
+				print(f"{self.index} ******> {error}")
+				self._broken_download = True
+			except OSError as error:
+				print(f"{self.index} ******> {error}")
+				self._broken_download = True
+			except http.client.IncompleteRead as error:
+				print(f"{self.index} ******> {error}")
 				self._broken_download = True
 			except urllib.error.HTTPError as error:
-#				print(f"HTTPError: {error}")
+				print(f"{self.index} ******> {error}")
 				self._broken_download = True
-			except urllib.error.URLError as error:
-#				print(f"URLError on {peer.target}: {error}")
+			except TimeoutError as error:
+				print(f"{self.index} ******> {error}")
 				self._broken_download = True
-			except TimeoutError:
-				self._broken_download = True
-			except http.client.RemoteDisconnected:
+			except http.client.RemoteDisconnected as error:
+				print(f"{self.index} ******> {error}")
 				self._broken_download = True
 # 			except Exception as error:
 # 				print(f"Error: {error}")
