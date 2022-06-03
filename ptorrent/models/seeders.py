@@ -46,9 +46,11 @@ class Peers:
 	def __getitem__(self, key):
 		return self.peers[key]
 
+	def keys(self):
+		return self.peers.keys()
+
 	def items(self):
-		for priority, peer in self.peers.items():
-			yield priority, peer
+		return self.peers.items()
 
 	def init(self):
 		self.peers = {}
@@ -56,11 +58,13 @@ class Peers:
 	def get_fastest_peers(self):
 		first_10 = {}
 		# Sort based on download speed (chunk speed)
-		for peer in sorted(self.peers.keys(), key=lambda prio: prio.chunk_speed, reverse=True):
-			first_10[peer] = self.peers[peer]
+		for priority in sorted(self.peers.keys(), key=lambda prio: prio.chunk_speed):
+			first_10[priority] = self.peers[priority]
 			if len(first_10) == 10:
 				break
 
 		# Then sort on whoever has the highest connectivity
-		for peer in sorted(first_10.keys(), key=lambda prio: prio.connectivity, reverse=True):
-			return peer, first_10[peer]
+		for priority in sorted(first_10.keys(), key=lambda prio: prio.connectivity):
+			return priority, first_10[priority]
+
+		return None, []

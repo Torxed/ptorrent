@@ -13,11 +13,11 @@ def close_all_workers():
 		except:
 			pass
 
-def create_worker(func, peers, chunks) -> int:
+def create_worker(func) -> int:
 	if not 'workers' in storage:
 		storage['workers'] = []
 
-	storage['workers'].append(multiprocessing.Process(target=func, args=(chunks, peers)))
+	storage['workers'].append(multiprocessing.Process(target=func))
 
 	return len(storage['workers'])
 

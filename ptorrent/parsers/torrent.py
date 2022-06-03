@@ -3,8 +3,10 @@ import typing
 import json
 import multiprocessing
 import random
-from ..models import Torrent, TorrentInfo, Peers, Peer, Priority
+import uuid
 from .jsonizer import JSON
+from ..models import Torrent, TorrentInfo, Peers, Peer, Priority
+from ..storage import storage
 
 def torrent_data_to_string(data :bytes) -> typing.Tuple[bytes, int]:
 	if data[:1].isdigit() is False:
@@ -105,7 +107,7 @@ def parse_torrent(data :bytes) -> typing.Any:
 	return result
 
 
-def load_torrent(path :pathlib.Path, peers, chunks) -> Torrent:
+def load_torrent(path :pathlib.Path, chunks :multiprocessing.queues.Queue, peers:multiprocessing.queues.Queue) -> Torrent:
 	if (actual_path := path.expanduser().resolve()).exists() is False:
 		raise FileNotFoundError(f"Could not locate Torrent {actual_path}")
 
@@ -119,10 +121,6 @@ def load_torrent(path :pathlib.Path, peers, chunks) -> Torrent:
 
 	Peers, Peer, Priority
 
-	# Add the peer and chunk list into a Queue object
-	# to safely work across threads/processes.
-	# result['peers'] = multiprocessing.Queue()
-	# result['chunks'] = multiprocessing.Queue()
 	peer_handle = Peers()
 	peer_handle.init()
 	peer_list_unsorted = [*result['url_list']]
@@ -134,8 +132,16 @@ def load_torrent(path :pathlib.Path, peers, chunks) -> Torrent:
 		peer_handle.add_peer(priority=prio, peer=peer)
 	
 	peers.put(peer_handle)
-	# result['peers'] = peers
-	# result['chunks'] = chunks
+	uid = uuid.uuid4()
+	result['uuid'] = uid
 
+	if not 'torrents' in storage:
+		storage['torrents'] = {}
 
-	return Torrent(**result)
+	storage['torrents'][uid] = {
+		'chunks' : chunks,
+		'peers' : peers,
+		'torrent' : Torrent(**result)
+	}
+
+	return uid

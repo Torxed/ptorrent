@@ -3,12 +3,14 @@ import pathlib
 import hashlib
 import random
 import multiprocessing.queues
+import time
 from dataclasses import dataclass
 
 if typing.TYPE_CHECKING:
 	from .chunk import Chunk, BrokenChunk
 
 from .seeders import Peers, Priority, Peer
+from ..storage import storage
 
 @dataclass
 class TorrentInfo:
@@ -28,7 +30,8 @@ class TorrentInfo:
 @dataclass
 class Torrent:
 	info :TorrentInfo
-	# peers :multiprocessing.queues.Queue
+	uuid :str
+	# To unlock this, we need: https://stackoverflow.com/questions/3671666/sharing-a-complex-object-between-processes
 	# chunks :multiprocessing.queues.Queue
 	download_location :typing.Optional[str] = pathlib.Path('./').resolve()
 	creation_date :typing.Optional[str] = None
@@ -51,25 +54,35 @@ class Torrent:
 
 	def close(self):
 		# Close any open queues
-		self.peers.close()
-		self.chunks.close()
+		storage['torrents'][self.uuid]['peers'].close()
+		storage['torrents'][self.uuid]['chunks'].close()
 
-	def get_fastest_peer(self, peers_queue):
+	def get_fastest_peer(self):
 		# Pop the peer-list out from thread-safe queue
-		peers = peers_queue.get()
+		while storage['torrents'][self.uuid]['peers'].empty() is True:
+			time.sleep(random.random())
+
+		peers = storage['torrents'][self.uuid]['peers'].get(block=True)
 
 		priority, peers_list = peers.get_fastest_peers()
+		if len(peers_list) == 0:
+			storage['torrents'][self.uuid]['peers'].put(peers, block=True)
+			return None, None
+
 		peer_index = random.randint(0, len(peers_list)-1)
 		peer = peers_list.pop(peer_index)
 
 		# Pop the peer-list back into the thread safe queue
-		peers_queue.put(peers)
+		storage['torrents'][self.uuid]['peers'].put(peers, block=True)
 
 		return priority, peer
 
-	def update_priority(self, peers_queue :multiprocessing.queues.Queue, priority :Priority, peer :Peer):
+	def update_priority(self, priority :Priority, peer :Peer):
 		# Pop the peer-list out from thread-safe queue
-		peers = peers_queue.get()
+		while storage['torrents'][self.uuid]['peers'].empty() is True:
+			time.sleep(random.random())
+
+		peers = storage['torrents'][self.uuid]['peers'].get(block=True)
 
 		if priority not in peers:
 			peers[priority] = []
@@ -77,7 +90,7 @@ class Torrent:
 		peers[priority].append(peer)
 
 		# Pop the peer-list back into the thread safe queue
-		peers_queue.put(peers)
+		storage['torrents'][self.uuid]['peers'].put(peers, block=True)
 
 	def set_download_location(self, path :pathlib.Path):
 		self.download_location = path.expanduser().resolve()

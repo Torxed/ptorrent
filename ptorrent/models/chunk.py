@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from .torrent import Torrent
 from .seeders import Priority, Peer
+from ..storage import storage
 
 class Reader(threading.Thread):
 	def __init__(self, func):
@@ -70,8 +71,13 @@ class BrokenChunk:
 
 		return True
 
-	def download(self, torrent_chunks, torrent_peers):
-		prio, peer = self.torrent.get_fastest_peer(torrent_peers)
+	def download(self):
+		# print(f"Initating download of index {self.index}")
+
+		prio = None
+		while prio is None:
+			prio, peer = self.torrent.get_fastest_peer()
+			time.sleep(0.0001)
 
 		start = int(self.index * self.torrent.info.piece_length)
 		end = int(start + self.torrent.info.piece_length)-1
@@ -80,7 +86,7 @@ class BrokenChunk:
 			if peer.target[-1] == '/':
 				peer.target += self.torrent.info.name.decode('UTF-8', errors='replace')
 
-			print(f"Downloading {self} via {peer.target}")
+			# print(f"Starting download of index {self.index} via {peer.target}")
 
 			request = urllib.request.Request(peer.target)
 			request.headers['Range'] = f"bytes={start}-{end}"
@@ -106,7 +112,6 @@ class BrokenChunk:
 				dl_ended = time.time()
 #				print(f"Dl finished at {dl_ended}")
 				self.torrent.update_priority(
-					peers_queue=torrent_peers,
 					priority=Priority(connectivity=con_end - con_start, chunk_speed=dl_ended - dl_started),
 					peer=peer
 				)
@@ -114,15 +119,15 @@ class BrokenChunk:
 				self.data = reader.data
 				self.actual_hash = hashlib.sha1(self.data).digest()
 
-#				print(f'{self} Finished downloading at connectivity={con_end - con_start}, chunk_speed={dl_ended - dl_started}')
+				# print(f'{self} Finished downloading at connectivity={con_end - con_start}, chunk_speed={dl_ended - dl_started}')
 			except http.client.IncompleteRead:
-				print(f"IncompleteRead")
+#				print(f"IncompleteRead")
 				self._broken_download = True
 			except urllib.error.HTTPError as error:
-				print(f"HTTPError: {error}")
+#				print(f"HTTPError: {error}")
 				self._broken_download = True
 			except urllib.error.URLError as error:
-				print(f"URLError on {peer.target}: {error}")
+#				print(f"URLError on {peer.target}: {error}")
 				self._broken_download = True
 			except TimeoutError:
 				self._broken_download = True
@@ -140,9 +145,9 @@ class BrokenChunk:
 # 
 # 				print(f"{self} could not download the data from {peer.target}: {error} {traceback_string}")
 
-		print(f'Putting {self} in queue {torrent_chunks}')
+		# print(f"Putting {self} in queue {storage['torrents'][self.torrent.uuid]['chunks']}")
 		if self.is_complete:
-			torrent_chunks.put(
+			storage['torrents'][self.torrent.uuid]['chunks'].put(
 				Chunk(
 					torrent=self.torrent,
 					index=self.index,
@@ -151,9 +156,8 @@ class BrokenChunk:
 					actual_hash=self.actual_hash
 				)
 			)
-			print('-- Empty:', torrent_chunks.empty())
 		else:
-			print(f"No conversion needed.")
-			torrent_chunks.put(self)
+			# print(f"No conversion needed.")
+			storage['torrents'][self.torrent.uuid]['chunks'].put(self)
 
 		return self
