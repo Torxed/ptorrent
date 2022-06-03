@@ -10,10 +10,12 @@ import threading
 import time
 import socket
 import ssl
+import logging
 from dataclasses import dataclass
 from .torrent import Torrent
 from .seeders import Priority, Peer
 from ..storage import storage
+from ..logger import log
 
 class Reader(threading.Thread):
 	def __init__(self, func, chunksize):
@@ -34,7 +36,8 @@ class Reader(threading.Thread):
 		try:
 			self.data = self.func(self.chunksize)
 		except Exception as error:
-			print(f'Could not read data: {error}')
+			if storage['arguments'].debug:
+				log(f'Could not read data: {error}', level=logging.ERROR, fg="red")
 			pass
 
 @dataclass
@@ -83,15 +86,25 @@ class BrokenChunk:
 		return True
 
 	def download(self):
-		print(f"{self.index}: Initating download")
+		colors = {
+			0 : "gray",
+			1 : "teal",
+			2 : "blue",
+			3 : "magenta",
+			4 : "green"
+		}
+
+		if storage['arguments'].debug:
+			log(f"{self.index}: Initating download", level=logging.INFO, fg=colors[self.index % (len(colors)-1)])
 
 		last_output = time.time()
 		prio = None
 		while prio is None:
 			prio, peer = self.torrent.get_fastest_peer()
 			time.sleep(0.0001)
-			if time.time() - last_output > 5:
-				print(f"{self.index} still waiting for fastest available peer...")
+
+			if storage['arguments'].debug and time.time() - last_output > 5:
+				log(f"{self.index} still waiting for fastest available peer...", level=logging.WARNING, fg="orange")
 				last_output = time.time()
 
 		chunk_start_byte = int(self.index * self.torrent.info.piece_length)
@@ -101,14 +114,15 @@ class BrokenChunk:
 			if http_schema.path.endswith('/') is True:
 				http_schema = urllib.parse.urlparse(peer.target + self.torrent.info.name.decode('UTF-8', errors='replace'))
 
-			print(f"{self.index}: Starting download of index via {http_schema}")
+			if storage['arguments'].debug:
+				log(f"{self.index}: Starting download of index via {http_schema}", level=logging.INFO, fg=colors[self.index % (len(colors)-1)])
 
 			# request = urllib.request.Request(peer.target)
 			# request.headers['Range'] = f"bytes={start}-{end}"
 			
 			try:
 				con_start = time.time()
-				# print(f"Connecting!")
+				
 				if http_schema.scheme == 'https':
 					handle = http.client.HTTPSConnection(*http_schema.netloc.split(':', 1), timeout=1)
 				elif http_schema.scheme == 'http':
@@ -121,12 +135,12 @@ class BrokenChunk:
 				handle.putheader('Range', f"bytes={chunk_start_byte}-{chunk_end_byte}")
 				handle.endheaders()
 				handle.send(b'')
-				# handle = urllib.request.urlopen(request, timeout=1)
+				
 				con_end = time.time()
-				# print(f"Con done at {con_end}")
 
 				dl_started = time.time()
-				print(f"{self.index}: Connecting took {con_end - con_start}")
+				if storage['arguments'].debug:
+					log(f"{self.index}: Connecting took {con_end - con_start}", level=logging.INFO, fg=colors[self.index % (len(colors)-1)])
 
 				response = handle.getresponse()
 				if response.status != 206:
@@ -143,7 +157,8 @@ class BrokenChunk:
 					raise TimeoutError(f"Could not read data in timely fashion.")
 
 				dl_ended = time.time()
-				print(f"{self.index}: Download took {dl_ended - dl_started}: {reader.data[:20]}...")
+				if storage['arguments'].debug:
+					log(f"{self.index}: Download took {dl_ended - dl_started}", level=logging.INFO, fg=colors[self.index % (len(colors)-1)])
 				self.torrent.update_priority(
 					priority=Priority(connectivity=con_end - con_start, chunk_speed=dl_ended - dl_started),
 					peer=peer
@@ -152,39 +167,34 @@ class BrokenChunk:
 				self.data = reader.data
 				self.actual_hash = hashlib.sha1(self.data).digest()
 			except ssl.SSLCertVerificationError as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except socket.gaierror as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except OSError as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except http.client.IncompleteRead as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except urllib.error.HTTPError as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except TimeoutError as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
 			except http.client.RemoteDisconnected as error:
-				print(f"{self.index} ******> {error}")
+				if storage['arguments'].debug:
+					log(f"{self.index} ******> {error}", level=logging.ERROR, fg="red")
 				self._broken_download = True
-# 			except Exception as error:
-# 				print(f"Error: {error}")
-# 				self._broken_download = True
-# 
-# 				try:
-# 					exc_info = sys.exc_info()
-# 					traceback_string = ''.join(traceback.format_stack(exc_info))
-# 				except AttributeError:
-# 					traceback_string = ''#''.join(traceback.format_stack())
-# 
-# 				print(f"{self} could not download the data from {peer.target}: {error} {traceback_string}")
 
-		# print(f"Putting {self} in queue {storage['torrents'][self.torrent.uuid]['chunks']}")
 		if self.is_complete:
 			storage['torrents'][self.torrent.uuid]['chunks'].put(
 				Chunk(
@@ -196,7 +206,6 @@ class BrokenChunk:
 				)
 			)
 		else:
-			# print(f"No conversion needed.")
 			storage['torrents'][self.torrent.uuid]['chunks'].put(self)
 
 		return self

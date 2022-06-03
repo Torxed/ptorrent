@@ -13,3 +13,4 @@ from .threading import (
 	start_next_worker,
 	close_all_workers
 )
+from .logger import log

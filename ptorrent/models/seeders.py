@@ -59,9 +59,10 @@ class Peers:
 		first_10 = {}
 		# Sort based on download speed (chunk speed)
 		for priority in sorted(self.peers.keys(), key=lambda prio: prio.chunk_speed):
-			first_10[priority] = self.peers[priority]
-			if len(first_10) == 10:
-				break
+			if len(self.peers[priority]):
+				first_10[priority] = self.peers[priority]
+				if len(first_10) == 10:
+					break
 
 		# Then sort on whoever has the highest connectivity
 		for priority in sorted(first_10.keys(), key=lambda prio: prio.connectivity):

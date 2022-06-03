@@ -20,7 +20,9 @@ import multiprocessing
 
 common_parameters = argparse.ArgumentParser(description="A set of common parameters for the tooling", add_help=True)
 common_parameters.add_argument("--torrent", nargs="?", type=pathlib.Path, help="Which torrent to download.", required=True)
+common_parameters.add_argument("--debug", action="store_true", default=False, help="Turn on debugging.", required=False)
 arguments, unknown = common_parameters.parse_known_args()
+ptorrent.storage['arguments'] = arguments
 
 def handler(signum, frame):
 	ptorrent.close_all_workers()
@@ -48,12 +50,12 @@ chunks_count = torrent.info.length / torrent.info.piece_length
 chunks_h = int(chunks_count * 100) / 100
 
 
-print(f"Downloading: {torrent.info.name}")
-print(f"Filesize: {torrent.info.length / 1024 / 1024}MB ({torrent.info.length} bytes)")
-print(f"Chunk size: {torrent.info.piece_length / 1024}KB ({torrent.info.piece_length} bytes)")
-print(f"Chunks: {chunks_h}")
-print(f"Download location: {pathlib.Path('~/').expanduser().resolve()}")
-# print(json.dumps(torrent, cls=ptorrent.JSON, indent=4))
+ptorrent.log(f"Downloading: {torrent.info.name}")
+ptorrent.log(f"Filesize: {torrent.info.length / 1024 / 1024}MB ({torrent.info.length} bytes)")
+ptorrent.log(f"Chunk size: {torrent.info.piece_length / 1024}KB ({torrent.info.piece_length} bytes)")
+ptorrent.log(f"Chunks: {chunks_h}")
+ptorrent.log(f"Download location: {pathlib.Path('~/').expanduser().resolve()}")
+# ptorrent.log(json.dumps(torrent, cls=ptorrent.JSON, indent=4))
 
 torrent.set_download_location(pathlib.Path('~/'))
 chunks = list(torrent.verify_local_data())
@@ -64,23 +66,25 @@ for index, chunk in enumerate(chunks):
 			func=chunk.download
 		)
 
-	if index >= 5:
-		break
+	if ptorrent.storage['arguments'].debug:
+		if index >= 5:
+			break
 
-	print(f"Created worker for index {index}")
+	if ptorrent.storage['arguments'].debug:
+		ptorrent.log(f"Created worker for index {index}")
 
 last_output = time.time()
 last_num_done = 0
 for chunk_index in range(len(chunks)):
 	chunk = chunks[chunk_index]
 
-	# print(f'On: {chunk}')
+	# ptorrent.log(f'On: {chunk}')
 	if type(chunk) == ptorrent.BrokenChunk:
-		# print(f"Waiting for {chunk} to download.")
+		# ptorrent.log(f"Waiting for {chunk} to download.")
 		while chunk.is_downloaded is False or chunk.is_complete is False:
 			if chunk._broken_download:
 				# Retry and hopefully a good peer will come along.
-				# print(f"{chunk} was corrupt, re-inserting into pool.")
+				# ptorrent.log(f"{chunk} was corrupt, re-inserting into pool.")
 				# Reset the chunk so we don't get false flags
 				chunk = ptorrent.BrokenChunk(torrent=chunk.torrent, index=chunk.index, expected_hash=chunk.expected_hash, data=None, actual_hash=None)
 				ptorrent.create_worker(
@@ -111,10 +115,11 @@ for chunk_index in range(len(chunks)):
 					last_num_done = done
 					last_output = time.time()
 
-					print(f"{done}/{len(chunks)} has finished downloading.")
+					ptorrent.log(f"{done}/{len(chunks)} has finished downloading.")
 
-					if last_num_done > 5:
-						break
+					if ptorrent.storage['arguments'].debug:
+						if last_num_done > 5:
+							break
 
 			time.sleep(0.0001)
 
@@ -128,10 +133,11 @@ for chunk_index in range(len(chunks)):
 			last_num_done = done
 			last_output = time.time()
 
-			print(f"{done}/{len(chunks)} has finished downloading.")
+			ptorrent.log(f"{done}/{len(chunks)} has finished downloading.")
 
-	if last_num_done > 5:
-		break
+	if ptorrent.storage['arguments'].debug:
+		if last_num_done > 5:
+			break
 
 if len(chunks) == chunks_count:
  	torrent.feed(chunks)

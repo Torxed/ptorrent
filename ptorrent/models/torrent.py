@@ -4,6 +4,7 @@ import hashlib
 import random
 import multiprocessing.queues
 import time
+import logging
 from dataclasses import dataclass
 
 if typing.TYPE_CHECKING:
@@ -11,6 +12,7 @@ if typing.TYPE_CHECKING:
 
 from .seeders import Peers, Priority, Peer
 from ..storage import storage
+from ..logger import log
 
 @dataclass
 class TorrentInfo:
@@ -59,8 +61,13 @@ class Torrent:
 
 	def get_fastest_peer(self):
 		# Pop the peer-list out from thread-safe queue
+		last_output = time.time()
 		while storage['torrents'][self.uuid]['peers'].empty() is True:
 			time.sleep(random.random())
+
+			if time.time() - last_output > 15:
+				log(f"Can not get fastest peer because peer list is checked out in another thread for too long.", level=logging.WARNING, fg="orange")
+				last_output = time.time()
 
 		peers = storage['torrents'][self.uuid]['peers'].get(block=True)
 
@@ -79,8 +86,13 @@ class Torrent:
 
 	def update_priority(self, priority :Priority, peer :Peer):
 		# Pop the peer-list out from thread-safe queue
+		last_output = time.time()
 		while storage['torrents'][self.uuid]['peers'].empty() is True:
 			time.sleep(random.random())
+			
+			if time.time() - last_output > 15:
+				log(f"Can not update priority on peer {peer} due to stuck loop.", level=logging.WARNING, fg="orange")
+				last_output = time.time()
 
 		peers = storage['torrents'][self.uuid]['peers'].get(block=True)
 
